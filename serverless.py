@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from typing import Optional
 import sqlite3
 import docker
-import uuid
 from threading import Thread
 
 class Function(BaseModel):
@@ -37,13 +36,13 @@ def build_image(language):
         dockerfile = """
 FROM python:3.9-slim
 WORKDIR /app
-COPY . /app
+COPY ./script.py /app
 CMD ["python", "/app/script.py"]"""
     elif language == 'js':
         dockerfile = """
 FROM node:18-slim
 WORKDIR /app
-COPY . /app
+COPY ./script.js /app
 CMD ["node", "/app/script.js"]"""
     else:
         raise ValueError("Unsupported language")
@@ -90,8 +89,8 @@ def execute_function(function_id: str):
     if not result:
         raise HTTPException(status_code=404, detail="Function not found")
 
-    _, name, language, code, timeout = result
-    script_path = f"/tmp/{name}.{language}"
+    id, name, language, code, timeout = result
+    script_path = f"/tmp/script.{language}"
 
     with open(script_path, "w") as f:
         f.write(code)
@@ -100,14 +99,13 @@ def execute_function(function_id: str):
     with open("/tmp/Dockerfile", "w") as f:
         f.write(dockerfile)
 
-    image_tag = f"function-{name}:{uuid.uuid4()}"
+    image_tag = f"function-{name}:{id}"
     client.images.build(path="/tmp", tag=image_tag)
 
     def run_container(result):
         container = client.containers.run(
             image=image_tag,
             detach=True,
-            remove=True,
         )
         container.wait(timeout=timeout)
         output = container.logs().decode()
