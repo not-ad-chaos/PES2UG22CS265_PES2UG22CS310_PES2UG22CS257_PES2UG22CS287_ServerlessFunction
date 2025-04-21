@@ -2,70 +2,113 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import sqlite3
+import json
+import subprocess
 import docker
+
 
 class Function(BaseModel):
     name: str
     language: str
     code: str
+    runtime: str
     timeout: Optional[int] = 5
+
 
 app = FastAPI()
 client = docker.from_env()
-db_path = 'functions.db'
+db_path = "functions.db"
+
 
 def init_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS functions (
+    cursor.execute(
+        """CREATE TABLE IF NOT EXISTS functions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         language TEXT,
         code TEXT,
+        runtime TEXT,
         timeout INTEGER
-    )''')
+    )"""
+    )
     conn.commit()
     conn.close()
 
+
 init_db()
 
-def build_image(language):
-    if language == 'py':
-        dockerfile = """
+
+def build_docker_image(language):
+    if language == "py":
+        return """
 FROM python:3.9-slim
 WORKDIR /app
 COPY ./script.py /app
 CMD ["python", "/app/script.py"]"""
-    elif language == 'js':
-        dockerfile = """
+    elif language == "js":
+        return """
 FROM node:18-slim
 WORKDIR /app
 COPY ./script.js /app
 CMD ["node", "/app/script.js"]"""
     else:
         raise ValueError("Unsupported language")
-    return dockerfile
+
+
+def build_nanos_image(language):
+    if language == "py":
+        return "python3", {"Args": ["python3", "/script.py"], "Dirs": ["temp"]}
+    elif language == "js":
+        return "nodejs", {"Args": ["node", "/script.js"], "Dirs": ["temp"]}
+    else:
+        raise ValueError("Unsupported language")
+
 
 @app.post("/functions")
 def create_function(data: Function):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO functions (name, language, code, timeout) VALUES (?, ?, ?, ?)",
-                   (data.name, data.language, data.code, data.timeout))
+    cursor.execute(
+        "INSERT INTO functions (name, language, code, runtime, timeout) VALUES (?, ?, ?, ?)",
+        (data.name, data.language, data.code, data.runtime, data.timeout),
+    )
     script_path = f"/tmp/script.{data.language}"
-
     with open(script_path, "w") as f:
         f.write(data.code)
 
-    dockerfile = build_image(data.language)
-    with open("/tmp/Dockerfile", "w") as f:
-        f.write(dockerfile)
+    if data.runtime == "docker":
+        with open("/tmp/Dockerfile", "w") as f:
+            f.write(build_docker_image(data.language))
 
-    image_tag = f"function-{data.name}:{cursor.lastrowid}"
-    client.images.build(path="/tmp", tag=image_tag)
+        image_tag = f"function-{data.name}:{cursor.lastrowid}"
+        client.images.build(path="/tmp", tag=image_tag)
+    else:
+        with open("/tmp/config.json", "w") as f:
+            package, config = build_nanos_image(data.language)
+            f.write(json.dumps(config))
+        image_name = f"function-{data.name}-{cursor.lastrowid}"
+        subprocess.run(
+            [
+                "ops",
+                "build",
+                "-t",
+                image_name,
+                "--package",
+                package,
+                "-c",
+                "/tmp/config.json",
+                script_path,
+            ],
+            cwd="/tmp",
+            check=True,
+        )
+
     conn.commit()
     conn.close()
     return {"id": cursor.lastrowid, "message": "Function created"}
+
 
 @app.get("/functions/{function_id}")
 def get_function(function_id: str):
@@ -78,6 +121,7 @@ def get_function(function_id: str):
         raise HTTPException(status_code=404, detail="Function not found")
     return dict(zip(["id", "name", "language", "code", "timeout"], result))
 
+
 @app.delete("/functions/{function_id}")
 def delete_function(function_id: str):
     conn = sqlite3.connect(db_path)
@@ -86,6 +130,7 @@ def delete_function(function_id: str):
     conn.commit()
     conn.close()
     return {"message": "Function deleted"}
+
 
 # Execution with Timeout Enforcement
 @app.post("/execute/{function_id}")
