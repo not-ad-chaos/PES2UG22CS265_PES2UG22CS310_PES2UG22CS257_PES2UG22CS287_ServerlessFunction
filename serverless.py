@@ -3,10 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 import sqlite3
 import docker
-from threading import Thread
 
 class Function(BaseModel):
-    id: int
     name: str
     language: str
     code: str
@@ -20,7 +18,7 @@ def init_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS functions (
-        id INTEGER AUTO_INCREMENT PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         language TEXT,
         code TEXT,
@@ -52,8 +50,19 @@ CMD ["node", "/app/script.js"]"""
 def create_function(data: Function):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO functions (id, name, language, code, timeout) VALUES (?, ?, ?, ?, ?)",
-                   (data.id, data.name, data.language, data.code, data.timeout))
+    cursor.execute("INSERT INTO functions (name, language, code, timeout) VALUES (?, ?, ?, ?)",
+                   (data.name, data.language, data.code, data.timeout))
+    script_path = f"/tmp/script.{data.language}"
+
+    with open(script_path, "w") as f:
+        f.write(data.code)
+
+    dockerfile = build_image(data.language)
+    with open("/tmp/Dockerfile", "w") as f:
+        f.write(dockerfile)
+
+    image_tag = f"function-{data.name}:{cursor.lastrowid}"
+    client.images.build(path="/tmp", tag=image_tag)
     conn.commit()
     conn.close()
     return {"id": cursor.lastrowid, "message": "Function created"}
@@ -89,36 +98,18 @@ def execute_function(function_id: str):
     if not result:
         raise HTTPException(status_code=404, detail="Function not found")
 
-    id, name, language, code, timeout = result
-    script_path = f"/tmp/script.{language}"
+    id, name, _, _, timeout = result
 
-    with open(script_path, "w") as f:
-        f.write(code)
-
-    dockerfile = build_image(language)
-    with open("/tmp/Dockerfile", "w") as f:
-        f.write(dockerfile)
-
-    image_tag = f"function-{name}:{id}"
-    client.images.build(path="/tmp", tag=image_tag)
-
-    def run_container(result):
+    try:
         container = client.containers.run(
-            image=image_tag,
+            image=f"function-{name}:{id}",
             detach=True,
         )
         container.wait(timeout=timeout)
         output = container.logs().decode()
         container.stop()
-        result[0] = output
-
-    try:
-        result = [None]
-        thread = Thread(target=run_container, args=(result,))
-        thread.start()
-        thread.join(timeout)
-        if thread.is_alive():
-            raise TimeoutError("Function execution timed out")
-        return {"output": result[0]}
+        container.remove()
+        client.containers.prune()
+        return {"output": output}
     except Exception as e:
         return {"error": str(e)}
