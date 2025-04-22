@@ -463,8 +463,7 @@
             method: "POST",
           });
           const result = await response.json();
-          console.log(result)
-          resultPara.textContent = result.output;
+          resultPara.textContent = result.output ?? "Timeout";
           resultPara.style.color =
             result.output === undefined ? "red" : "green";
         }
