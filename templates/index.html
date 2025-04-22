@@ -39,7 +39,7 @@
 
       .tab {
         display: none;
-        max-width: 600px;
+        max-width: 800px;
         margin: 0 auto;
         background-color: #fff;
         padding: 20px;
@@ -97,6 +97,96 @@
         color: green;
         font-weight: bold;
       }
+
+      .metrics-card {
+        background-color: #f9f9ff;
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        border-left: 4px solid #4f46e5;
+      }
+
+      .metrics-title {
+        font-weight: bold;
+        margin-bottom: 8px;
+        color: #333;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .metrics-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .stat-box {
+        background-color: #fff;
+        padding: 8px;
+        border-radius: 4px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      }
+
+      .stat-label {
+        font-size: 0.8rem;
+        color: #666;
+      }
+
+      .stat-value {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #4f46e5;
+      }
+
+      .recent-executions {
+        margin-top: 10px;
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #eee;
+        border-radius: 4px;
+      }
+
+      .execution-item {
+        padding: 8px;
+        border-bottom: 1px solid #eee;
+        font-size: 0.9rem;
+      }
+
+      .execution-item:last-child {
+        border-bottom: none;
+      }
+
+      .success {
+        color: #10b981;
+      }
+
+      .failure {
+        color: #ef4444;
+      }
+
+      .view-details-btn {
+        background-color: #e2e1ff;
+        color: #4f46e5;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8rem;
+      }
+
+      .view-details-btn:hover {
+        background-color: #d1d0ff;
+      }
+
+      .metrics-summary {
+        font-size: 0.9rem;
+        color: #666;
+        margin-bottom: 20px;
+      }
     </style>
   </head>
   <body>
@@ -105,7 +195,7 @@
     <div class="tabs">
       <button onclick="switchTab('create')">🛠 Create Function</button>
       <button onclick="switchTab('list')">📋 View Functions</button>
-      <button onclick="switchTab('extra')">✨ Extra</button>
+      <button onclick="switchTab('metrics')">📊 Metrics</button>
     </div>
 
     <!-- Create Tab -->
@@ -143,10 +233,12 @@
       <ul id="function-list"></ul>
     </div>
 
-    <!-- Extra Tab -->
-    <div id="extra" class="tab">
-      <h2>Coming Soon 🚀</h2>
-      <p>We're working on more powerful features for your functions.</p>
+    <!-- Metrics Tab (previously Extra) -->
+    <div id="metrics" class="tab">
+      <h2>Function Metrics Dashboard</h2>
+      <p class="metrics-summary">View performance metrics and execution statistics for your functions.</p>
+      <div id="metrics-overview"></div>
+      <div id="function-metrics"></div>
     </div>
 
     <script>
@@ -158,6 +250,8 @@
 
         if (tabId === "list") {
           fetchFunctions();
+        } else if (tabId === "metrics") {
+          fetchMetrics();
         }
       }
 
@@ -211,6 +305,156 @@
         });
       }
 
+      // Fetch all metrics summary
+      async function fetchMetrics() {
+        try {
+          const response = await fetch("/metrics");
+          const data = await response.json();
+          renderMetricsOverview(data.functions);
+        } catch (error) {
+          console.error("Error fetching metrics:", error);
+          document.getElementById("metrics-overview").innerHTML = 
+            "<p>Error loading metrics. Please try again later.</p>";
+        }
+      }
+
+      // Render overview of all function metrics
+      function renderMetricsOverview(functions) {
+        const container = document.getElementById("metrics-overview");
+        container.innerHTML = "";
+
+        if (!functions || functions.length === 0) {
+          container.innerHTML = "<p>No function metrics available yet.</p>";
+          return;
+        }
+
+        functions.forEach(fn => {
+          const card = document.createElement("div");
+          card.className = "metrics-card";
+
+          // Format execution time to milliseconds with 2 decimal places
+          const avgTime = fn.avg_execution_time ? 
+            (fn.avg_execution_time * 1000).toFixed(2) + " ms" : 
+            "N/A";
+
+          // Format last executed date
+          const lastExecuted = fn.last_executed ? 
+            new Date(fn.last_executed).toLocaleString() : 
+            "Never";
+
+          card.innerHTML = `
+            <div class="metrics-title">
+              <span>${fn.function_name}</span>
+              <button class="view-details-btn" data-id="${fn.function_id}">View Details</button>
+            </div>
+            <div class="metrics-stats">
+              <div class="stat-box">
+                <div class="stat-label">Executions</div>
+                <div class="stat-value">${fn.execution_count || 0}</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Success</div>
+                <div class="stat-value">${fn.success_count || 0}</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Failures</div>
+                <div class="stat-value">${fn.failure_count || 0}</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Avg Time</div>
+                <div class="stat-value">${avgTime}</div>
+              </div>
+            </div>
+            <div style="font-size: 0.8rem; color: #666;">
+              Last executed: ${lastExecuted}
+            </div>
+          `;
+
+          container.appendChild(card);
+        });
+      }
+
+      // Fetch and render detailed metrics for a specific function
+      async function fetchFunctionDetails(functionId) {
+        try {
+          const response = await fetch(`/metrics/${functionId}`);
+          const data = await response.json();
+          renderFunctionDetails(data);
+        } catch (error) {
+          console.error("Error fetching function details:", error);
+          document.getElementById("function-metrics").innerHTML = 
+            "<p>Error loading function details. Please try again later.</p>";
+        }
+      }
+
+      // Render detailed metrics for a specific function
+      function renderFunctionDetails(data) {
+        const container = document.getElementById("function-metrics");
+        container.innerHTML = "";
+
+        const detailsCard = document.createElement("div");
+        detailsCard.className = "metrics-card";
+
+        // Create content for recent executions
+        let executionsHTML = "";
+        if (data.recent_executions && data.recent_executions.length > 0) {
+          executionsHTML = `
+            <h3>Recent Executions</h3>
+            <div class="recent-executions">
+              ${data.recent_executions.map(execution => `
+                <div class="execution-item">
+                  <span class="${execution.status}">${execution.status === "success" ? "✓" : "✗"}</span>
+                  <span>Time: ${(execution.execution_time * 1000).toFixed(2)} ms</span> | 
+                  <span>CPU: ${execution.cpu_usage.toFixed(2)}%</span> | 
+                  <span>Memory: ${execution.memory_usage.toFixed(2)}%</span> | 
+                  <span>${new Date(execution.timestamp).toLocaleString()}</span>
+                  ${execution.error_message ? `<div class="failure">Error: ${execution.error_message}</div>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          `;
+        } else {
+          executionsHTML = "<p>No execution history available.</p>";
+        }
+
+        detailsCard.innerHTML = `
+          <h3>Detailed Metrics: ${data.function_name}</h3>
+          <div class="metrics-stats">
+            <div class="stat-box">
+              <div class="stat-label">Total Runs</div>
+              <div class="stat-value">${data.stats.execution_count}</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Success Rate</div>
+              <div class="stat-value">
+                ${data.stats.execution_count ? 
+                  Math.round((data.stats.success_count / data.stats.execution_count) * 100) + "%" : 
+                  "N/A"}
+              </div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-label">Avg Time</div>
+              <div class="stat-value">
+                ${data.stats.avg_execution_time ? 
+                  (data.stats.avg_execution_time * 1000).toFixed(2) + " ms" : 
+                  "N/A"}
+              </div>
+            </div>
+          </div>
+          ${executionsHTML}
+          <button onclick="closeDetails()" style="margin-top: 15px; background-color: #eee; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">
+            Back to Overview
+          </button>
+        `;
+
+        container.appendChild(detailsCard);
+      }
+
+      function closeDetails() {
+        document.getElementById("function-metrics").innerHTML = "";
+        document.getElementById("metrics-overview").style.display = "block";
+      }
+
       document.addEventListener("click", async function (e) {
         if (e.target.matches(".exec-btn")) {
           const funcId = e.target.getAttribute("data-id");
@@ -238,6 +482,12 @@
           const result = await response.json();
 
           fetchFunctions();
+        }
+
+        if (e.target.matches(".view-details-btn")) {
+          const funcId = e.target.getAttribute("data-id");
+          document.getElementById("metrics-overview").style.display = "none";
+          fetchFunctionDetails(funcId);
         }
       });
     </script>
